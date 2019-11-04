@@ -1,0 +1,15 @@
+program psitest;
+
+uses
+  Forms,
+  psitest_main in 'psitest_main.pas' {Form1},
+  psi in 'psilib/psi.pas';
+
+{$R *.res}
+
+begin
+  Application.Initialize;
+  Application.Title := 'Psitest';
+  Application.CreateForm(TForm1, Form1);
+  Application.Run;
+end.

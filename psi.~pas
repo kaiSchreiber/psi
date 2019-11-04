@@ -1,0 +1,29 @@
+unit psi;
+
+interface
+
+function SetupDist(n_guess,n_x: Integer;x_min,x_max,pse: Double;
+   n_pse:Integer;sd_pse,nsd_pse,slope:Double;n_slope:Integer;
+   sd_slope,nsd_slope,p_err:Double): Integer;  cdecl external 'psi.dll'
+function SetupDistErr(n_guess,n_x:Integer;x_min,x_max,pse: Double;
+   n_pse:Integer;sd_pse,nsd_pse,slope:Double;n_slope:Integer;
+   sd_slope,nsd_slope,p_err:Double;n_p_err: Integer;
+   sd_p_err,nsd_p_err:Double): Integer; cdecl external 'psi.dll'
+function RescaleDist(ns,method: Integer;nsd_pse,nsd_slope,nsd_p_err:Double):Integer; cdecl external 'psi.dll'
+function DistActive(ns: Integer):Integer; cdecl external 'psi.dll'
+function FinishDist(ns: Integer): Integer; cdecl external 'psi.dll'
+function HighestActive: Integer; cdecl external 'psi.dll'
+function StoreResult(ns: Integer;x:Double;res: Integer): Integer; cdecl external 'psi.dll'
+function CurrentEstimate(ns,v:Integer): Double; cdecl external 'psi.dll'
+procedure SetDebugLevel(dl:Integer); cdecl external 'psi.dll'
+function GetDebugLevel: Integer; cdecl external 'psi.dll'
+function NextTrial(ns:Integer):Double; cdecl external 'psi.dll'
+function EstimateTime(rep,n1,n2,n3: Integer): Double; cdecl external 'psi.dll'
+procedure SavePFile(ns:Integer); cdecl external 'psi.dll'
+procedure SaveEFile; cdecl external 'psi.dll'
+
+implementation
+
+
+
+end.

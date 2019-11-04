@@ -1,0 +1,633 @@
+\documentclass[10pt,letterpaper]{article}
+\usepackage{verbatim}
+\usepackage{graphicx}
+\usepackage[T1]{fontenc} 
+\usepackage{textcomp}
+\usepackage{makeidx}
+\setcounter{tocdepth}{2}
+\makeindex
+
+\begin{document}
+
+\title{PSI.DLL Manual} \author{Kai Schreiber} \date{\today} \maketitle
+
+\tableofcontents
+
+\section{Overview}
+
+The method described in this document is based on the $\Psi$-method developed by 
+Kontsevich and Tyler \cite{kontsevich:1999}. Their approach is expanded to 
+include a third parameter, {\tt $p_{err}$}. {\tt psi.dll} provides a fast 
+implementation of the $\Psi$-method. Libraries are provided for embedding
+{\tt psi.dll} in Delphi, Visual Basic, Matlab and C/C++ programs. 
+
+On a Pentium 4 PC running Windows XP, this implementation delivers a new 
+stimulus intensity for 30 different stimulus intensities and a probability array 
+of size 200x50, representing 200 different values for {\tt shift} and 50 different 
+values for {\tt slope} in about 135 ms. 50 stimulus intensities, and array 
+dimensions of 500x50 still compute in under 600 ms, making this method useable
+without compromise on any modern Windows PC.
+
+\subsection{Theory}
+
+To estimate the psychometric function describing an observer's performance for a given task, 
+{\tt psi.dll} provides three different parametric psychometric functions,
+which must be chosen at the time of setting up the probability distribution. The
+index psf for choosing the function used is zero based.
+
+These are: a logistic function (for detection tasks) (psf=0)
+
+\begin{equation}
+\Psi_{n_c,p_{err},s,c}(x) = \frac{1}{n_c} + \frac{h}{1+e^{ 
+      \frac{- 4 \tan(s) \cdot (x-c)} {h} 
+      } }
+\end{equation}
+
+with
+
+\begin{equation}
+h = 1-\frac{1}{n_c} -p_{err}
+\end{equation}
+
+an inverted Gaussian (discrimination) (psf=1)
+
+\begin{equation}
+\Psi_{n_c,p_{err},s,c}(x) = 1 - p_{err} - h \cdot e^{ - \left( \frac{\tan(s) \cdot (x-c)}{h} \right) ^2}
+\end{equation}
+
+with 
+
+\begin{equation}
+h = 1 - p_{err} - \frac{1}{n_c}
+\end{equation}
+
+and a logistic function with symmetrical lapse rates (discrimination) (psf=2)
+
+\begin{equation}
+\Psi_{n_c,p_{err},s,c}(x) = p_{err} + (1 - 2 \cdot p_{err}) \frac{1}{ 1+e^{ \frac{- 4 \tan(s) \cdot (x-c)}{1 - 2 \cdot p_{err} } } }
+\end{equation}
+
+
+The parameters in these functions are $n_c$, the number of alternative 
+answers the subject can give, $p_{err}$, the probability that the subject will 
+make an error, $s$ and $c$ are the slope and threshold. The slope parameter ranges 
+from -90 to 90 degrees and represents the slope at the threshold for the logistic
+functions, and the slope at 50\% rise for the inverted Gaussian (the sign of the slope
+is irrelevant in this case).
+
+For simplicity we collect the latter three of these parameters into parameter 
+$\lambda$ and consider $n_c$ to be of fixed size.
+
+\subsubsection{The Probability Distribution}
+
+We now consider the probability distribution for these psychometric functions
+$p_{n_c}(\lambda)$. From now on I will consider $n_c$ to be constant and omit it
+from the equations.
+
+We start with some prior distribution $p_0(\lambda)$ and collect a set of data 
+at intensities $x_i$ with results (success/failure) $r_i$.
+
+The probability for this set of data given $\lambda$ is then the product of t he 
+probabilites for the individual data points.
+
+\begin{equation}
+p(x_i,r_i|\lambda) = \prod_{i,r=s} \Psi_\lambda (x) \prod_{i,r=f} (1-\Psi_\lambda (x)) 
+\end{equation}
+
+By Bayes' theorem we obtain the probability for each psychometric function given the data:
+
+\begin{equation}
+p(\lambda |x_i,r_i) = \frac{ p(x_i,r_i|\lambda) \cdot p(\lambda) }{p(x_i,r_i)} p_0(\lambda)
+\end{equation}
+
+Since $p(x_i,r_i)$ is an unknown constant and the left hand side has to be a 
+normalized probability distribution, we can write
+
+\begin{equation}
+p(\lambda |x_i,r_i) = \frac{ p(x_i,r_i|\lambda) \cdot p(\lambda) \cdot p_0(\lambda)}{\sum_\lambda p(\lambda)} 
+\end{equation}
+
+This means we can update the probability distribution after acquisition of 
+result $r_i$ at intensity $x_i$ by multiplying it with the probability for this 
+datapoint and renormalizing it.
+
+\begin{equation}
+p_i(\lambda) = \left\{ \begin{array}{ll}
+  \frac{\displaystyle p_{i-1}(\lambda) \cdot \Psi_\lambda(x_i)}{\displaystyle \sum_\lambda p_i(\lambda)} & r_i = success \\
+  \\
+  \frac{\displaystyle p_{i-1}(\lambda) \cdot (1 - \Psi_\lambda(x_i))}{\displaystyle \sum_\lambda p_i(\lambda)} & r_i = failure \end{array} \right.
+\label{eq:pd}
+\end{equation}
+
+\subsubsection{The Expected Outcome}
+
+At any given time now we have the current probability distribution $p(\lambda)$. 
+If the next trial were placed at intensity $x_i$, the probability for the result $r_i=success$
+is
+
+\begin{equation}
+p(r_i=s|x_i) = \sum_\lambda p_{i-1}(\lambda) \Psi_\lambda(x_i)
+\label{eq:p1}
+\end{equation}
+
+Likewise, the probability for result $r_i=failure$ is 
+
+\begin{equation}
+p(r_i=s|x_i) = \sum_\lambda p_{i-1}(\lambda) (1-\Psi_\lambda(x_i))
+\label{eq:p2}
+\end{equation}
+
+For each of these two outcomes we can compute the future probability 
+distribution function $p_i(\lambda|r_i)$ using equation \ref{eq:pd}.
+
+We now have the probability of each outcome and the future probaility 
+distribution for these outcomes.
+
+\subsubsection{The Entropy of the Distribution}
+
+For estimating the quality or usefulness of a probability distribution function for
+estimating the parameters $\lambda$ we use the entropy $E$ of the distribution:
+
+\begin{equation}
+E = - \sum_\lambda p(\lambda) \ln ( p(\lambda) )
+\end{equation}
+
+Lower values of $E$ signify more information about $\lambda$ being represented in the
+distribution.
+
+We can now compute the expected entropy for intensity $x_i$ using the probability distributions
+obtained in equations \ref{eq:p1} and \ref{eq:p2}:
+
+\begin{equation}
+<E> = - p(r_i=s,x_i) \cdot E(r_i=s,x_i) - p(r_i=f,x_i) \cdot E(r_i=f,x_i)
+\end{equation}
+
+The intensity $x_i$, for which the expected entropy after the next trial becomes 
+minimal will be the optimal intensity for that trial.
+
+\subsection{Implementation}
+
+The functions described in this manual have been written in Borland Delphi 7 for 
+Windows and are part of the shared library psi.dll.
+
+Using the header files included in the distirbution, the functions exported by 
+{\tt psi.dll} can be used in any programming language that supports the calling 
+of such functions. Specifically, the functionality has been tested with Delphi, 
+Visual Basic and Matlab 6.5(R13). A header file specifying the interface for use 
+with C/C++ is also included as part of the interface to Matlab, but has not been
+used in C/C++ projects yet.
+
+{\tt psi.dll} exports the 15 funtions which are listed in this manual, using the 
+{\tt cdecl} calling convention. Sinve Visual Basic is unable to call external 
+functions that use {\tt cdecl}, I have included function wrappers using the 
+{\tt stdcall} calling convention. These functions have an addition {\tt SC} in front
+of the name, i.e. the Visual Basic version of {\tt SetupDist} is {\tt SCSetupDist}.
+
+\subsubsection{The Mathwork's Matlab}
+
+To use {\tt psi.dll} in Matlab, the Mathworks GenericDLL is required. This
+will only work in Matlab 6.5(R13). Once the GenericDLL package is installed,
+the collection of m-files included with {\tt psi.dll} will make all the functions
+of the dll available from the Matlab command line.
+
+Internally, each of the function wrapper m files checks whether the dll has been 
+loaded and loads it if necessary. Then it calls the apropriate exported dll 
+function and returns the results. Most functions for matlab work identical to 
+the below documentation, except for {\tt CurrentEstimate}, which can be called 
+omitting the parameter {\tt e} for convenience, and will then return a 7x1 
+matrix containing all seven results at once.
+
+\subsubsection{Microsoft Visual Basic}
+
+For Visual Basic, the file {\tt psi.bas} needs to be added to your program as a 
+module. Make sure the dll file is present in your system's path. You can then 
+call the functions from anywhere in your program.
+
+
+\subsubsection{Borland Delphi}
+
+To use {\tt psi.dll} in Delphi just include the unit {\tt psi.pas} in your 
+project and include it in your uses clause. Put the dll in your system's path or 
+the project output folder. You can now call all the dll functions.
+
+\subsubsection{C and C++}
+
+The file {\tt psi.h} included for the Matlab interface contains the declarations 
+to all the dll functions. This information should be usable to include the dll 
+in C and C++ projects, but since I am not a C programmer I have not been able to 
+write the full interface.
+
+\subsubsection{Other languages}
+
+{\tt psi.dll} is usable in any language that can call external dlls using either 
+the {\tt cdecl} or {\tt stdcall} calling conventions. Just load the dll using 
+code apropriate for your language and declare the functions using the {\tt 
+.h}, {\tt .pas} and {\tt .bas} file as a reference.
+
+\subsection{Files}
+
+The distribution contains the following files
+
+\begin{description}
+\item[psi.dll] The main library file
+\item[psi.h] C header file declaring the functions
+\item[psi.bas] Visual Basic Module declaring the exported functions
+\item[psi.pas] Delphi unit declaring the exported functions
+\item[content.m] Tabler of contents for Matlab's help system.
+\item[CurrentEstimate.m] Matlab wrapper for psi.dll's function.
+\item[DistActive.m] Matlab wrapper for psi.dll's function.
+\item[EstimateTime.m] Matlab wrapper for psi.dll's function.
+\item[FinishDist.m] Matlab wrapper for psi.dll's function.
+\item[GetDebugLevel.m] Matlab wrapper for psi.dll's function.
+\item[HighestActive.m] Matlab wrapper for psi.dll's function.
+\item[NextTrial.m] Matlab wrapper for psi.dll's function.
+\item[PossibleValues.m] Matlab wrapper for psi.dll's function.
+\item[RemoveResult.m] Matlab wrapper for psi.dll's function.
+\item[RescaleDist.m] Matlab wrapper for psi.dll's function.
+\item[SetDebugLevel.m] Matlab wrapper for psi.dll's function.
+\item[SetupDist.m] Matlab wrapper for psi.dll's function.
+\item[StoreResult.m] Matlab wrapper for psi.dll's function.
+\item[UnloadPsi.m] Removes psi.dll from Matlabs memory, if it has been loaded.
+\item[psiman.pdf] This document.
+\item[psitest.exe] A Windows executable for testing the functionality of psi.dll.
+\end{description}
+
+\section{Exported functions}
+
+\subsection{SetupDist}
+
+\begin{description}
+\item[Syntax:] {\tt nd = SetupDist(nfc, nx, xmin, xmax, shift, nshift, sdshift, nsdshift, slope, nslope, sdslope, nsdslope, perr, nperr, sdperr, nsdperr, psf)}
+\end{description}
+
+Set up a new Gaussian or flat probability distribution prior and return its 
+number. The parameters:
+
+\begin{description}
+\item[nfc] This parameter represents the false alarm rate. If {\tt nfc} is bigger than 1, it is interpreted
+  as the number of choices and the false alarm rate is set to $\frac{1}{{\tt nfc}}$. If {\tt nfc} is smaller
+  than 1, it is used directly as the false alarm rate. Pass 0 for a yes/no-type of experiment.
+\item[nx] The number of distinct stimulus intensities.
+\item[nmin,nmax] The minimum and maximum stimulus intensities, respectively.
+\item[shift] The shift of the psychometric function. This is the intensity at which
+  the function is halfway between guessing probability and $1-p_err$
+\item[nshift] The number of possible values for the shift to consider
+\item[sdshift] The standard deviation of the gaussian prior for the shift
+\item[nsdshift] The width in standard deviations around the shift that is included in the analysis
+\item[slope,nslope,sdslope,nsdslope] The same four parameter types for the slope
+\item[perr,nperr,sdperr,nsdperr] The same four parameter types for the miss rate
+\item[psf] A parameter determining the psychometric function to use (see introduction)
+\end{description}
+
+In other words, {\tt SetupDistErr} will setup a three dimensional probability 
+distribution $p(\lambda)$, with $\lambda$ centered on {\tt shift, slope, perr}. 
+The array containing the distribution will have {\tt nshift x nslope x nperr} 
+components, and will range from {\tt (shift - nsdshift * sdshift)} to {\tt (shift + 
+nsdshift * sdshift)} for the {\tt shift} dimension, from {\tt (slope - nsdslope * 
+sdslope))} to {\tt (slope + nsdslope * sdslope)} in the {\tt slope} dimension 
+and from {\tt (perr - nsdperr * sdperr)} to {\tt (perr + nsdperr * sdperr)} in 
+the {\tt perr} dimension. If the lower bound for the {\tt perr} dimension is
+below zero, the range will be truncated at zero\footnote{i.e. a distribution with
+{\tt perr=0.01, sdperr=0.02} and {\tt nsdperr=2} will range from 0 to 0.05 and have
+a gaussian prior centered on 0.01. Because of the asymmetry introduced by the truncation the
+intital estimate for this prior will not be 0.01, however.}.
+
+To exclude a dimension from the analysis, set {\tt nshift, nslope} or {\tt nperr} 
+to 1. 
+
+To make the prior for a dimension flat rather than a Gaussian, set {\tt sdshift, 
+sdslope} or {\tt sdperr} to 0. The range of values considered in that dimension 
+is then determined by the {\tt nsd} parameter, which in this case becomes the 
+absolute width.
+
+{\tt SetupDist} returns the number of the new distribution if succesful, -1 
+otherwise.
+
+If you don't want to estimate the lapse rate, set {\tt nperr} to 1. In this case,
+{\tt sdperr} and {\tt nsdperr} will be ignored.
+
+{\tt SetupDist} returns the number of the new distribution if succesful, -1 
+otherwise.
+
+\subsection{NextTrial}
+
+\begin{description}
+\item[Syntax:] {\tt x = NextTrial(nd)}
+\end{description}
+
+This function returns the optimal stimulus intensity for placing the next trial 
+for the probability distribution number {\tt nd}. The intensity will be picked 
+from the range of values specified using {\tt (nx, xmin, xmax)} upon creation of 
+the distribution.
+
+This function will save a file {\tt e.psi} containing the expected entropy 
+function, if {\tt DebugLevel} is set to 2 or higher.
+
+If {\tt nd} is a negative number, the actual {\tt nd} used is {\tt $-1-nd$}. 
+In this case the function does not return the stimulus intensity, but the index 
+into the array of intensities, starting at 0 for {\tt xmin} up to {\tt nx-1} for
+{\tt xmax}.
+
+If the relevant distribution is not active, {\tt NextTrial} returns -9999. The Matlab
+version of the function returns NaN in this case.
+
+\subsection{StoreResult}
+
+\begin{description}
+\item[Syntax:] {\tt b = StoreResult(nd,x,r)}
+\end{description}
+
+This function stores a single trial and its outcome in the probability 
+distribution {\tt nd}, updating that distribution.
+
+{\tt x} is the intensity at which the trial was placed, {\tt r} is the result,
+with {\tt r=0} meaning failure and {\tt r=1} meaning success.
+
+The function returns 1 if the operation succeeded, 0 otherwise. Failure will be due
+to the specified distribution being inactive.
+
+{\tt StoreResult} will save the new probability distribution in a file named 
+{\tt p.psi}, if the {\tt DebugLevel} is set to 2 or higher.
+
+
+\subsection{RemoveResult}
+
+\begin{description}
+\item[Syntax:] {\tt b = RemoveResult(nd,x,r)}
+\end{description}
+
+Removes a stored result from a probability distribution. The syntax for 
+specifying the result is the same as for {\tt StoreResult}.
+
+The function returns 1 if it was successful, 0 if it failed. Failure can be due 
+to the specified distribution being inactive or the specified result not being 
+stored in the distribution.
+
+{\tt RemoveResult} will save the new probability distribution in a file named 
+{\tt p.psi}, if the {\tt DebugLevel} is set to 2 or higher.
+
+
+\subsection{CurrentEstimate}
+
+\begin{description}
+\item[Syntax:] {\tt c = CurrentEstimate(nd,e)}
+\end{description}
+
+This function returns the expected values for the three components of $\lambda$ and 
+their standard deviations, the number of trials stored in a particular 
+distribution, and the psf used to set it up.
+
+\begin{equation}
+<\lambda> =  \sum_\lambda \lambda p(\lambda)
+\end{equation}
+
+\begin{eqnarray}
+\sigma_\lambda & = &  \sqrt{ <\lambda^2> - <\lambda>^2} \\
+& = & \sqrt{ \sum_\lambda \lambda^2 p(\lambda) - \left( \sum_\lambda \lambda p(\lambda) \right)^2}
+\end{eqnarray}
+
+Each call to {\tt CurrentEstimate} returns one component, based on the parameter 
+{\tt e}. For {\tt e} ranging from 1 to 8 {\tt CurrentEstimate} returns $<shift>$, $<slope>$, 
+$<perr>$, $<\sigma_{shift}>$, $<\sigma_{slope}>$, $<\sigma_{perr}>$, $ntrials$ and $psf$, respectively.
+
+Passing negative {\tt e} returns the unbiased estimates, i.e. removes the prior before computing the
+expected values.
+
+{\tt CurrentEstimate} returns -9999 if distribution {\tt nd} is not active. The Matlab version
+of the function returns NaN in this case.
+
+\subsection{RescaleDist}
+
+\begin{description}
+\item[Syntax:] {b = \tt RescaleDist(nd, method, nsdshift, nsdslope, nsdperr, nshift, nslope, nperr)}
+\end{description}
+
+This function is capable of changing the prior for a distribution, changing the 
+scaling of a distribution and changing the resolution of a distribution, 
+depending on the value of parameter {\tt method}. The function returns 1 if the 
+rescaling was successful, 0 otherwise.
+
+{\tt RescaleDist} will save the new probability distribution in a file named 
+{\tt p.psi}, if the {\tt DebugLevel} is set to 2 or higher.
+
+There are three main uses for this function:
+
+\begin{enumerate} 
+
+\item When starting with a wide range of possible values for $\lambda$, the 
+first few trials will restrict the probability distribution to a much narrower 
+range. Rescaling to this new range will then increase the resolution of 
+estimation, while leaving the computation time unchanged.
+
+\item While a prior is useful in the beginning of an experiment to guide the 
+placement of the first trials, it might actually introduce a bias later on. {\tt 
+RescaleDist} therefore can replace the prior with a flat distribution to remove 
+that bias.
+
+\item When the experiment is finished, it will be desirable to compute the 
+expected values for the components of $\lambda$. This computation will be more 
+accurate, the more elements per dimension the underlying probability 
+distribution has. While the size of the distribution during an experiment is 
+limited by intertrial intervals (see section /ref{fun:EsTi} for reference), this 
+limitation is grealty relaxed for analysis.
+
+\end{enumerate}
+
+Any of the rescaling methods preserves all the data collected so far, by recreating a 
+prior function and recalculating the current probability distribution from the 
+stored trials. While changing resolutions, priors and scaling will affect the 
+placement of future trials, it does not affect the viability of past or future
+data points.
+
+The values of parameters not used by a particular method will be ignored.
+
+\subsubsection{\tt method=1}
+
+The center and standard deviation of the prior will be (re)set to what it was 
+when the distribution was first initialized. The new array of $p(\lambda)$ will 
+be centered on the current estimate of $\lambda$ and the range of values will be 
+set by the current estimate of $\sigma_\lambda$ and the ${\tt nsd}$ parameters.
+
+For example, the range of values for {\tt shift} will be from {\tt (<shift>-
+nsdshift*$\sigma_{shift}$)} to {\tt (<shift> + nsdshift*$\sigma_{shift}$)}.
+
+The number of elements of the array along each dimension will not be changed 
+from what it is.
+
+\subsubsection{\tt method=2}
+
+Same as method=1, but the prior is set to a flat distribution in all dimensions.
+
+\subsubsection{\tt method=3}
+
+This resets the prior and the range of values for all three dimensions to what they
+were set to be when the distribution was first initialized.
+
+\subsubsection{\tt method=4}
+
+This resets the range of values for all three dimensions to what they were set 
+to be when the distribution was first initialized, but uses a flat prior.
+
+\subsubsection{\tt method=5}
+
+Like {\tt method=1}, but the number of elements along each dimension is reset to 
+{\tt nshift, nslope} and {\tt nperr}.
+
+\subsubsection{\tt method=6}
+
+Like {\tt method=2}, but the number of elements along each dimension is reset to 
+{\tt nshift, nslope} and {\tt nperr}.
+
+\subsubsection{\tt method=7}
+
+Like {\tt method=3}, but the number of elements along each dimension is reset to 
+{\tt nshift, nslope} and {\tt nperr}.
+
+\subsubsection{\tt method=8}
+
+Like {\tt method=4}, but the number of elements along each dimension is reset to 
+{\tt nshift, nslope} and {\tt nperr}.
+
+\subsubsection{Overview}
+
+\begin{tabular}{|c||c|c|c|c|} \hline
+Method & Rescale & Prior & Resize & Parameters used \\ \hline \hline
+1 & yes & original & no & {\tt nsdshift,nsdslope,nsdperr} \\ \hline
+2 & yes & flat & no & {\tt nsdshift,nsdslope,nsdperr} \\ \hline
+3 & no & original & no & all ignored \\ \hline
+4 & no & flat & no & all ignored \\ \hline
+5 & yes & original & yes & all used \\ \hline
+6 & yes & flat & yes & all used \\ \hline
+7 & no & original & yes & {\tt nshift, nslope, nperr} \\ \hline
+8 & no & flat & yes & {\tt nshift, nslope, nperr} \\ \hline
+\end{tabular}
+
+\subsection{FinishDist}
+
+\begin{description}
+\item[Syntax:] {\tt b = FinishDist(nd)}
+\end{description}
+
+This will end data collection for probability distribution number nd. If {\tt 
+DebugLevel} is not 0, a file {\tt distXXXX.psi} will be written containing the 
+trial intensities and results. {\tt XXXX} will be replaced with the number of 
+the distribution used. Existing files will be overwritten. The distribution will 
+be set to inactive and will no longer be accessible for any functions.
+
+\subsection{DistActive}
+
+\begin{description}
+\item[Syntax:] {\tt b = DistActive(nd)}
+\end{description}
+
+Returns 1 if distribution {\tt nd} is active, 0 otherwise.
+
+\subsection{HighestActive}
+
+\begin{description}
+\item[Syntax:] {\tt h = HighestActive}
+\end{description}
+
+Returns the highest active distribution number. Returns -1 if no distribution is active.
+
+\subsection{PossibleValues}
+
+\begin{description}
+\item[Syntax:] {\tt x = PossibleValues(nd,i)}
+\end{description}
+
+Returns the intensity value $x_i$ for distribution {\tt nd}. If $i=-1$, the 
+function returns $n_x$ for distribution {\tt nd}.
+
+This is useful if you have to precompute the stimuli for each intensity and need to
+determine the index of the intensity returned by {\tt NextTrial}.
+
+\subsection{SavePFile}
+
+\begin{description}
+\item[Syntax:] {\tt SavePFile(nd)}
+\end{description}
+
+Saves the probaility distribution number {\tt nd} in the file {\tt p.psi}, 
+irrespective of the value of {\tt DebugLevel}. In addition to {\tt p.psi} the 
+three scaling files {\tt p\_shift.psi, p\_slope.psi} and {\tt p\_p\_err.psi} will be 
+saved. These contain the values of the parameters for each of the elements of 
+the array stored in {\tt p.psi}.
+
+If $p$ is a full three dimensional distribution array, the file {\tt p.psi} 
+contains a sequence of 2D arrays with perr constant for each array. The result 
+is a {\tt nshift x (nslope*nperr)} array.
+
+\subsection{SaveEFile}
+
+\begin{description}
+\item[Syntax:] {\tt SaveEFile}
+\end{description}
+
+Saves the last computed expected entropy function, irrespective of the value of 
+{\tt DebugLevel}. The function saved will reflect the last call to {\tt 
+NextTrial} independent of the distribution used.
+
+\subsection{SetDebugLevel}
+
+\begin{description}
+\item[Syntax:] {\tt SetDebugLevel(dl)}
+\end{description}
+
+Sets the internal {\tt DebugLevel} flag. {\tt dl=0} creates no file output, {\tt 
+dl=1} saves a file {\tt trials.psi} whenever a distribution is inactivated using 
+{\tt FinishDistribution}, {\tt dl=2} saves a file {\tt p.psi} containing the 
+probability distribution every time {\tt StoreResult} or {\tt RemoveResult} are 
+called and a file {\tt e.psi} containing the expected entropy function after each
+call to {\tt NextTrial}.
+
+\subsection{GetDebugLevel}
+
+\begin{description}
+\item[Syntax:] {\tt dl = GetDebugLevel}
+\end{description}
+
+Returns the current value of {\tt DebugLevel}.
+
+\subsection{EstimateTime}
+
+\begin{description}
+\item[Syntax:] {\tt t = EstimateTime(rep,nx,nshift,nslope,nperr)}
+\end{description}
+
+Use this function to measure the amount of time it takes {\tt NextTrial} to 
+compute the next trial's intensity on your machine. {\tt rep} is the number of 
+repetitions the measurement will be averaged over to improve accuracy, {\tt nx} 
+is the number of distinct trial intensities your experiment will contain, and 
+{\tt nshift, nslope} and {\tt nperr} specifiy the size of the array used for estimation.
+
+You should fix the number of stimulus intensities you want to use and then set 
+{\tt nshift}, {\tt nslope} and {\tt nperr} as high as possible without creating 
+too much delay between trials.
+
+The first time you call this function, it calibrates your processor's cycle 
+counter against the PC clock to determine your machines frequency. This takes 
+half a second. This does not influence the accuracy of the estimate for this 
+first run.
+
+\section{Matlab class {\tt psiSC}}
+
+For ease of handling, a matlab class defintion file is included in the distribution
+that serves as a wrapper for the specifc functions. The class object defined can be used to
+store trial results, retrieve the next trials intensity and obtain current estimates.
+
+The class requires {\tt psi.h} and {\tt psi.dll} to be present in the class directory 
+({\tt @psiSC}) to work.
+
+Type {\tt help psiSC} for a description of the class methods.
+
+\begin{thebibliography}{}
+
+\bibitem[\protect\citename{Kontsevich \& Tyler, }1999]{kontsevich:1999}
+{\sc Kontsevich, LL, \& Tyler, CW}. 1999.
+\newblock Bayesian adaptive estimation of psychometric slope and threshold.
+\newblock {\em Vis Res}, {\bf 39}(16), 2729--37.
+
+\end{thebibliography}
+
+\end{document}

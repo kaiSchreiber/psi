@@ -1,0 +1,38 @@
+\contentsline {section}{\numberline {1}Overview}{1}
+\contentsline {subsection}{\numberline {1.1}Theory}{2}
+\contentsline {subsubsection}{\numberline {1.1.1}The Probability Distribution}{2}
+\contentsline {subsubsection}{\numberline {1.1.2}The Expected Outcome}{3}
+\contentsline {subsubsection}{\numberline {1.1.3}The Entropy of the Distribution}{3}
+\contentsline {subsection}{\numberline {1.2}Implementation}{4}
+\contentsline {subsubsection}{\numberline {1.2.1}The Mathwork's Matlab}{4}
+\contentsline {subsubsection}{\numberline {1.2.2}Microsoft Visual Basic}{4}
+\contentsline {subsubsection}{\numberline {1.2.3}Borland Delphi}{5}
+\contentsline {subsubsection}{\numberline {1.2.4}C and C++}{5}
+\contentsline {subsubsection}{\numberline {1.2.5}Other languages}{5}
+\contentsline {subsection}{\numberline {1.3}Files}{5}
+\contentsline {section}{\numberline {2}Exported functions}{6}
+\contentsline {subsection}{\numberline {2.1}SetupDist}{6}
+\contentsline {subsection}{\numberline {2.2}NextTrial}{7}
+\contentsline {subsection}{\numberline {2.3}StoreResult}{7}
+\contentsline {subsection}{\numberline {2.4}RemoveResult}{8}
+\contentsline {subsection}{\numberline {2.5}CurrentEstimate}{8}
+\contentsline {subsection}{\numberline {2.6}RescaleDist}{8}
+\contentsline {subsubsection}{\numberline {2.6.1}\tt method=1}{9}
+\contentsline {subsubsection}{\numberline {2.6.2}\tt method=2}{9}
+\contentsline {subsubsection}{\numberline {2.6.3}\tt method=3}{10}
+\contentsline {subsubsection}{\numberline {2.6.4}\tt method=4}{10}
+\contentsline {subsubsection}{\numberline {2.6.5}\tt method=5}{10}
+\contentsline {subsubsection}{\numberline {2.6.6}\tt method=6}{10}
+\contentsline {subsubsection}{\numberline {2.6.7}\tt method=7}{10}
+\contentsline {subsubsection}{\numberline {2.6.8}\tt method=8}{10}
+\contentsline {subsubsection}{\numberline {2.6.9}Overview}{10}
+\contentsline {subsection}{\numberline {2.7}FinishDist}{10}
+\contentsline {subsection}{\numberline {2.8}DistActive}{11}
+\contentsline {subsection}{\numberline {2.9}HighestActive}{11}
+\contentsline {subsection}{\numberline {2.10}PossibleValues}{11}
+\contentsline {subsection}{\numberline {2.11}SavePFile}{11}
+\contentsline {subsection}{\numberline {2.12}SaveEFile}{11}
+\contentsline {subsection}{\numberline {2.13}SetDebugLevel}{12}
+\contentsline {subsection}{\numberline {2.14}GetDebugLevel}{12}
+\contentsline {subsection}{\numberline {2.15}EstimateTime}{12}
+\contentsline {section}{References}{12}

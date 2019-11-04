@@ -1,0 +1,971 @@
+library psi;
+
+{ Important note about DLL memory management: ShareMem must be the
+  first unit in your library's USES clause AND your project's (select
+  Project-View Source) USES clause if your DLL exports any procedures or
+  functions that pass strings as parameters or function results. This
+  applies to all strings passed to and from your DLL--even those that
+  are nested in records and classes. ShareMem is the interface unit to
+  the BORLNDMM.DLL shared memory manager, which must be deployed along
+  with your DLL. To avoid using BORLNDMM.DLL, pass string information
+  using PChar or ShortString parameters. }
+
+uses
+  TimeStampCounter,
+  SysUtils,
+  Classes,
+  Math;{$E dll}
+
+//, DelphiMex in 'DMX095\DelphiMex.pas';
+
+{$R *.res}
+
+procedure Normalize(ns: Integer); cdecl; forward;
+{function SetupDist(n_guess:Double;n_x: Integer;x_min,x_max,pse: Double;
+   n_pse:Integer;sd_pse,nsd_pse,slope:Double;n_slope:Integer;
+   sd_slope,nsd_slope,p_err:Double): Integer; cdecl; forward;}
+function SetupDist(n_guess:Double;n_x:Integer;x_min,x_max,pse: Double;
+   n_pse:Integer;sd_pse,nsd_pse,slope:Double;n_slope:Integer;
+   sd_slope,nsd_slope,p_err:Double;n_p_err: Integer;
+   sd_p_err,nsd_p_err:Double;psf: Integer): Integer; cdecl; forward;
+function RescaleDist(ns,method: Integer;nsd_pse,nsd_slope,nsd_p_err:Double;npse,nslope,nperr:Integer):Integer; cdecl; forward;
+function NextTrial(ns:Integer): Double; cdecl; forward;
+function StoreResult(ns: Integer;x:Double;res: Integer): Integer; cdecl; forward;
+function EstimateTime(rep,n1,n2,n3,n4: Integer): Double; cdecl; forward;
+function PossibleValues(ns,i: Integer): Double; cdecl; forward;
+
+type trial = record
+       x: Double;
+       res: Integer;
+     end;
+
+{type mxArray_TAG = record end;
+
+type mxArray    = mxArray_tag;
+     PmxArray   = ^MxArray;
+     PmxArrPTRS = array[1..2] of PmxArray;}
+
+
+var
+   // probability distributions
+   // n_stair,n_pse,n_slope,n_err
+   // finding of p_err is not currently implemented, but will be in future versions
+   p: array of array of array of array of Double;
+   prior: array of array of array of array of Double;
+   // this is for scaling of the parameters,
+   // a[ns,1,1] is the bias of the pse
+   // a[ns,1,2]  is the scaling factor of the pse
+   par: array of array[1..12] of Double;
+   a: array of array[0..3] of array[1..2] of Double;
+   t: array of array of trial;
+   // the entropies, stored in a global array for saveability
+   ent: array of Double;
+   // the type of psychometric function used is stored here
+   psych: array of Integer;
+   // used is 1 if the distribution is in use, 0 if not
+   used: array of Integer;
+   DebugLevel: Integer=0;
+   DTC: Boolean=false;
+   last_e: Integer;
+
+{procedure mexFunction(nlhs:longint; var plhs: PmxArrPTRS; nrhs:longint; var prhs: PmxArrPTRS); cdecl;
+
+var buf: PChar;
+    bl: Integer;
+    x: PDoubleARR;
+
+begin
+  writeln('You passed me '+IntToStr(nrhs)+' variables and expect '+IntToStr(nlhs)+' outputs.');
+  if nrhs>0 then writeln('The first variable contains: '+FormatFloat('00.000',mxGetScalar(prhs[1])));
+  if nrhs>1 then
+   if mxIsChar(prhs[2]) then
+    begin
+     bl:=mxGetN(prhs[2])*mxGetM(prhs[1])+1;
+     writeln('The string has a length of '+IntToStr(bl));
+     mxGetString(prhs[2],buf,bl);
+     writeln('The second variable contains: '+string(buf));
+    end;
+  if nrhs>1 then
+   if mxIsDouble(prhs[2]) then
+     writeln('The second variable contains: '+FormatFloat('00.000',mxGetScalar(prhs[2])));
+  if nrhs>2 then
+   if mxIsDouble(prhs[3]) then
+     writeln('The third variable contains: '+FormatFloat('00.000',mxGetScalar(prhs[3])));
+  plhs[1]:=mxCreateDoubleMatrix(1,1,mxREAL);
+  x:=mxGetPr(plhs[1]);
+  x^[1]:=5;
+end;
+
+exports mexFunction;}
+
+function GetDebugLevel: Integer; cdecl;
+
+begin
+  Result:=DebugLevel;
+end;
+
+procedure SavePFile(ns: Integer); cdecl;
+
+var PFile: TStringList;
+    i,j,k: Integer;
+    s: String;
+
+begin
+  if (ns<0) or (ns>High(used)) then Exit;
+  if used[ns]=0 then Exit;
+  s:='';
+  PFile:=TStringList.Create;
+  for k:=0 to High(p[ns,0,0]) do
+    for j:=0 to High(p[ns,0]) do
+     begin
+      s:=FormatFloat('0.00000E+',p[ns,0,j,k]);
+      for i:=1 to High(p[ns]) do
+         s:=s+#9+FormatFloat('0.00000E+',p[ns,i,j,k]);
+      PFile.Add(s);
+     end;
+  PFile.SaveToFile('p.psi');
+  PFile.Clear;
+  s:=FormatFloat('000.000',a[ns,1,1]);
+  for i:=1 to High(p[ns]) do
+    s:=s+#9+FormatFloat('000.000',a[ns,1,1]+a[ns,1,2]*i);
+  PFile.Add(s);
+  PFile.SaveToFile('p_pse.psi');
+  s:=FormatFloat('000.000',a[ns,2,1]);
+  for i:=1 to High(p[ns,0]) do
+    s:=s+#9+FormatFloat('000.000',a[ns,2,1]+a[ns,2,2]*i);
+  PFile[0]:=s;
+  PFile.SaveToFile('p_slope.psi');
+  s:=FormatFloat('000.000',a[ns,3,1]);
+  for i:=1 to High(p[ns,0,0]) do
+    s:=s+#9+FormatFloat('000.000',a[ns,3,1]+a[ns,3,2]*i);
+  PFile[0]:=s;
+  PFile.SaveToFile('p_p_err.psi');
+  PFile.Free;
+end;
+
+procedure SaveEFile; cdecl;
+
+var PFile: TStringList;
+    i: Integer;
+
+begin
+  if Length(ent)=0 then Exit;
+  PFile:=TStringList.Create;
+  PFile.Add(FormatFloat('000.00000',ent[0]));
+  for i:=1 to High(ent) do
+    PFile[0]:=PFile[0]+#9+FormatFloat('000.00000',ent[i]);
+  PFile.Add(FormatFloat('000.00000',par[last_e,2]));
+  for i:=1 to High(ent) do
+    PFile[1]:=PFile[1]+#9+FormatFloat('000.00000',par[last_e,2]+i*(par[last_e,3]-par[last_e,2])/(par[last_e,1]-1));
+  PFile.SaveToFile('e.psi');
+  PFile.Free;
+end;
+
+
+{function SetupDist(n_guess: Double;n_x: Integer;x_min,x_max,pse: Double;
+   n_pse:Integer;sd_pse,nsd_pse,slope:Double;n_slope:Integer;
+   sd_slope,nsd_slope,p_err:Double): Integer; cdecl;
+
+begin
+  Result:=SetupDistErr(n_guess,n_x,x_min,x_max,pse,n_pse,sd_pse,nsd_pse,slope,n_slope,sd_slope,nsd_slope,p_err,1,1,0,0);
+end;}
+
+function SetupDist(n_guess: Double;n_x:Integer;x_min,x_max,pse: Double;
+   n_pse:Integer;sd_pse,nsd_pse,slope:Double;n_slope:Integer;
+   sd_slope,nsd_slope,p_err:Double;n_p_err: Integer;
+   sd_p_err,nsd_p_err:Double; psf: Integer): Integer; cdecl;
+
+var i,j,k,ns: Integer;
+    p_i,p_j,p_k: Double;
+
+begin
+  Result:=-1;
+  if (n_pse<1) or (n_slope<1) or (n_p_err<1) then Exit;
+  if (n_guess=1) or (p_err>1) or (p_err<0) then Exit;
+
+  // some parameters need to be positive
+  n_guess:=abs(n_guess);
+  n_x:=abs(n_x); n_pse:=abs(n_pse); n_slope:=abs(n_slope); n_p_err:=abs(n_p_err);
+  nsd_pse:=abs(nsd_pse); nsd_slope:=abs(nsd_slope); nsd_p_err:=abs(nsd_p_err);
+  sd_pse:=abs(sd_pse); sd_slope:=abs(sd_slope); sd_p_err:=abs(sd_p_err);
+
+  // do we have an empty staircase?
+  ns:=-1;
+  for i:=High(used) downto 0 do
+    if used[i]=0 then ns:=i;
+  if ns=-1 then
+   begin
+    SetLength(used,Length(used)+1);
+    SetLength(p,Length(p)+1);
+    SetLength(prior,Length(prior)+1);
+    SetLength(t,Length(t)+1);
+    SetLength(a,Length(a)+1);
+    SetLength(psych,Length(psych)+1);
+    ns:=High(p);
+    used[ns]:=1;
+   end;
+  // set the psychometric function
+  psych[ns]:=psf;
+  // no trial yet
+  SetLength(t[ns],0);
+  // now create the priors
+  SetLength(p[ns],n_pse,n_slope,n_p_err);
+  SetLength(prior[ns],n_pse,n_slope,n_p_err);
+
+  // store the parameters for future use
+  // in RescaleStaircase and NextTrial
+  SetLength(par,Length(par)+1);
+  par[ns,1]:=n_x;
+  par[ns,2]:=x_min;
+  par[ns,3]:=x_max;
+  par[ns,4]:=pse;
+  par[ns,5]:=nsd_pse;
+  par[ns,6]:=sd_pse;
+  par[ns,7]:=slope;
+  par[ns,8]:=nsd_slope;
+  par[ns,9]:=sd_slope;
+  par[ns,10]:=p_err;
+  par[ns,11]:=nsd_p_err;
+  par[ns,12]:=sd_p_err;
+
+  // we have set the array to the right dimensions
+  // now if any of the dimensions has only one element
+  // we have a problem with computing the distribution
+  // but since in this case it will be flat, the actual
+  // value does not matter, so we can reset n for that
+  // dimension to 2
+
+  // store the probabilty for guessing
+  // if n_guess is above 1, it is the number of alternatives
+  // if below, it is the raw guess rate
+  if n_guess<1 then
+    a[ns,0,1]:=n_guess
+  else
+    a[ns,0,1]:=1/n_guess;
+  // set the scaling factors
+
+  // pse
+  // if n_pse=1 we don't have to estimate pse
+  // set n_pse to two to make the gaussian work
+  if n_pse=1 then
+   begin
+    a[ns,1,1]:=pse;
+    a[ns,1,2]:=0;
+   end
+  else
+  // if sd_pse equals zero the users requested a flat prior for pse
+  // the extent of the array is then determined by nsd_pse alone
+   if sd_pse=0 then
+    begin
+     a[ns,1,1]:=pse-nsd_pse;
+     a[ns,1,2]:=2*nsd_pse/(n_pse-1);
+    end
+   else
+    begin
+     a[ns,1,1]:=pse-nsd_pse*sd_pse;
+     a[ns,1,2]:=2*nsd_pse*sd_pse/(n_pse-1);
+    end;
+
+  // slope
+  if n_slope=1 then
+   begin
+    a[ns,2,1]:=slope;
+    a[ns,2,2]:=0;
+   end
+  else
+   if sd_slope=0 then
+    // flat distribution of width nsd_slope
+    begin
+     // first parameter is the bottom end of possible slopes
+     // this can not be smaller than -90
+     a[ns,2,1]:=max(-90,slope-nsd_slope);
+     // second parameter is the range of slopes divided by the number of
+     // different slopes. the upper end of the range can not be bigger than
+     // 90
+     a[ns,2,2]:=(min(90,slope+nsd_slope)-a[ns,2,1])/(n_slope-1);
+    end
+   else
+    begin
+     a[ns,2,1]:=max(-90,slope-nsd_slope*sd_slope);
+     a[ns,2,2]:=(min(90,slope+nsd_slope*sd_slope)-a[ns,2,1]) /(n_slope-1);
+    end;
+
+  // p_err
+  if n_p_err=1 then
+   begin
+    a[ns,3,1]:=p_err;
+    a[ns,3,2]:=0;
+   end
+  else
+   if sd_p_err=0 then
+    // flat distribution of width nsd_p_err
+    begin
+     // don't allow the lower limit to fall below zero
+     a[ns,3,1]:=max(0,p_err-nsd_p_err);
+     a[ns,3,2]:=(p_err+nsd_p_err-a[ns,3,1])/(n_p_err-1);
+    end
+   else
+    begin
+     // don't allow the lower limit to fall below zero
+     a[ns,3,1]:=max(0,p_err-nsd_p_err*sd_p_err);
+     a[ns,3,2]:=(p_err+nsd_p_err*sd_p_err-a[ns,3,1])/(n_p_err-1);
+    end;
+
+  // now create the 3d gaussian prior
+  for i:=0 to High(p[ns]) do
+    for j:=0 to High(p[ns,i]) do
+      for k:=0 to High(p[ns,i,j]) do
+       begin
+        if sd_pse   = 0 then p_i:=1 else p_i:=exp( - Power( ( a[ns,1,1] + i * a[ns,1,2] - pse   ) / sqrt(2) / sd_pse   ,2));
+        if sd_slope = 0 then p_j:=1 else p_j:=exp( - Power( ( a[ns,2,1] + j * a[ns,2,2] - slope ) / sqrt(2) / sd_slope ,2));
+        if sd_p_err = 0 then p_k:=1 else p_k:=exp( - Power( ( a[ns,3,1] + k * a[ns,3,2] - p_err ) / sqrt(2) / sd_p_err ,2));
+        p[ns,i,j,k]:=p_i*p_j*p_k;
+       end;
+  Normalize(ns);
+  // store the normalized prior
+  for i:=0 to High(p[ns]) do
+    for j:=0 to High(p[ns,i]) do
+      for k:=0 to High(p[ns,i,j]) do
+        prior[ns,i,j,k] := p[ns,i,j,k];
+  Result:=ns;
+end;
+
+function HighestActive: Integer; cdecl;
+
+begin
+  Result:=High(used);
+end;
+
+procedure Normalize(ns: Integer); cdecl;
+
+var i,j,k: Integer;
+    sum: Double;
+
+begin
+ // this normalizes the probability distribution to
+ // an average of 1 per cell
+ // so wherever we use it, we have to divide by that!
+
+ sum:=0;
+ for i:=0 to High(p[ns]) do
+  for j:=0 to High(p[ns,i]) do
+   for k:=0 to High(p[ns,i,j]) do
+     sum:=sum+p[ns,i,j,k];
+ for i:=0 to High(p[ns]) do
+  for j:=0 to High(p[ns,i]) do
+   for k:=0 to High(p[ns,i,j]) do
+     p[ns,i,j,k]:=p[ns,i,j,k]/sum;
+ if DebugLevel>1 then SavePFile(ns);
+end;
+
+function DistActive(ns: Integer):Integer; cdecl;
+
+begin
+  if (ns<0) or (ns>High(used)) then
+    Result:=0
+  else
+    Result:=used[ns];
+end;
+
+
+function FinishDist(ns: Integer): Integer; cdecl;
+var TrFile: TStringList;
+    i: Integer;
+
+begin
+  Result:=0;
+  if (ns<0) or (ns>High(used)) then Exit;
+  if used[ns]=0 then Exit;
+  // write the trials to a file, if requested
+  if DebugLevel>0 then
+   begin
+    TrFile:=TStringList.Create;
+    for i:=0 to High(t[ns]) do
+      if t[ns,i].res=1 then
+       TrFile.Add(FormatFloat('000.0000',t[ns,i].x)+#9+'1')
+      else
+       TrFile.Add(FormatFloat('000.0000',t[ns,i].x)+#9+'0');
+    TrFile.SaveToFile('dist'+FormatFloat('0000',ns)+'.psi');
+    TrFile.Free;
+   end;
+  Result:=1;
+  used[ns]:=0;
+  SetLength(p[ns],0,0,0);
+  SetLength(prior[ns],0,0,0);
+  // now remove all unused staircases at the end
+  while used[High(used)]=0 do
+   begin
+    SetLength(used,Length(used)-1);
+    SetLength(p,Length(p)-1);
+    SetLength(prior,Length(prior)-1);
+    SetLength(a,Length(a)-1);
+    SetLength(t,Length(t)-1);
+    SetLength(psych,Length(psych)-1);
+    SetLength(par,Length(par)-1);
+    if Length(used)=0 then
+     Exit;
+   end;
+end;
+
+function EstimateTime(rep,n1,n2,n3,n4: Integer): Double; cdecl;
+
+var i,ns: Integer;
+    StartTime: Int64;
+    x: Double;
+
+begin
+  // calibrate the timer
+  if not DTC then begin CalibrateTSC; DTC:=true; end;
+  // set up a staircase of the required size
+  ns:=SetupDist(2,n1,1,1,1,n2,1,1,1,n3,1,1,0.02,n4,0.01,1,0);
+  StartTime:=GetTSC;
+  for i:=1 to rep do
+   begin
+    x:=NextTrial(ns);
+    StoreResult(ns,x,1);
+   end;
+  Result:=(GetTSC-StartTime)/CPUSpeed/1000000/rep;
+  FinishDist(ns);
+end;
+
+function Psychometric(ns: Integer; c,sla,p_err,x: Double): Double;
+begin
+  // default psych[ns]=0
+
+  // sla is the angle (in degrees) of the psychometric function at the PSE for 0 and 2,
+  // and the angle of the psychometric function at 50% rise for function 1
+  // sla ranges from -90 to 90.
+  if (sla=-90) or (sla=90) then
+    // step functions
+    case psych[ns] of
+        0: if sign(sla)*x<sign(sla)*c then Result:=a[ns,0,1] else Result:=1-p_err;
+        1: if x=c then Result:=a[ns,0,1] else Result:=1-p_err;
+        2: if sign(sla)*x<sign(sla)*c then Result:=p_err else Result:=1-p_err;
+        else
+          if sign(sla)*x<sign(sla)*c then Result:=a[ns,0,1] else Result:=1-p_err;
+    end
+  else
+    case psych[ns] of
+        0: Result := a[ns,0,1] + (1-a[ns,0,1]-p_err) / (1+exp(- 4 * tan(sla/180*PI) / (1-a[ns,0,1]-p_err) *(x-c)));
+        1: Result := (1 - p_err) - (1 - p_err - a[ns,0,1]) * exp(- Power(tan(sla/180*PI)/(1 - p_err - a[ns,0,1]),2 )*exp(1)/2 * Power(x-c,2));
+        2: Result := p_err + (1 - 2 * p_err) / (1+exp(- 4 * tan(sla/180*PI) / (1 - 2 * p_err) *(x-c)));
+        //3: if abs(s*(x-c))<12 then
+        //     Result := a[ns,0,1] + (1-a[ns,0,1]-p_err) / (1+exp(- 4 * tan(sla/180*PI) / (1-a[ns,0,1]-p_err) *(x-c)))
+        //   else
+        //     Result:=0.5
+        else
+           Result := a[ns,0,1] + (1-a[ns,0,1]-p_err) / (1+exp(- 4 * tan(sla/180*PI) / (1-a[ns,0,1]-p_err) *(x-c)));
+    end;
+end;
+
+
+function StoreResult(ns: Integer;x:Double;res: Integer): Integer; cdecl;
+
+var i,j,k: Integer;
+    c,s,p_err: Double;
+
+begin
+  Result:=0;
+  if (ns<0) or (ns>High(used)) then Exit;
+  if used[ns]=0 then Exit;
+  Result:=1;
+  SetLength(t[ns],Length(t[ns])+1);
+  t[ns,High(t[ns])].x:=x;
+  t[ns,High(t[ns])].res:=res;
+  for i:=0 to High(p[ns]) do
+    for j:=0 to High(p[ns,i]) do
+      for k:=0 to High(p[ns,i,j]) do
+        begin
+         c:=a[ns,1,1]+i*a[ns,1,2];
+         s:=a[ns,2,1]+j*a[ns,2,2];
+         p_err:=a[ns,3,1]+k*a[ns,3,2];
+         if res=1 then
+           p[ns,i,j,k]:=p[ns,i,j,k] * Psychometric(ns,c,s,p_err,x)
+         else
+           p[ns,i,j,k]:=p[ns,i,j,k] * (1 - Psychometric(ns,c,s,p_err,x) );
+        end;
+  Normalize(ns);
+end;
+
+procedure SetDebugLevel(dl: Integer); cdecl;
+
+begin
+  DebugLevel:=dl;
+end;
+
+function RemoveResult(ns: Integer;x:Double;res: Integer): Integer; cdecl;
+
+var i,j,k: Integer;
+    c,s,p_err: Double;
+
+begin
+  Result:=0;
+  if (ns<0) or (ns>High(used)) then Exit;
+  if used[ns]=0 then Exit;
+
+  // does that trial exist in the data? if not, refuse to remove it
+  j:=-1;
+  for i:=0 to High(t[ns]) do
+    if (t[ns,i].x=x) and (t[ns,i].res=res) then j:=i;
+  if j=-1 then Exit;
+
+  t[ns,j]:=t[ns,High(t[ns])];
+  SetLength(t[ns],Length(t[ns])-1);
+  Result:=1;
+
+  for i:=0 to High(p[ns]) do
+    for j:=0 to High(p[ns,i]) do
+      for k:=0 to High(p[ns,i,j]) do
+        begin
+         c:=a[ns,1,1]+i*a[ns,1,2];
+         s:=a[ns,2,1]+j*a[ns,2,2];
+         p_err:=a[ns,3,1]+k*a[ns,3,2];
+         if res=1 then
+           p[ns,i,j,k]:=p[ns,i,j,k] / Psychometric(ns,c,s,p_err,x)
+         else
+           p[ns,i,j,k]:=p[ns,i,j,k] / (1-Psychometric(ns,c,s,p_err,x));
+        end;
+  Normalize(ns);
+end;
+
+
+function NextTrial(ns:Integer): Double; cdecl;
+
+var   e_low,c,s,p_err,x,p_rl,p_r,E_w,E_r: Double;
+      h,i,j,k: Integer;
+      ReturnIndex: Boolean;
+
+begin
+  Result:=-9999;
+  ReturnIndex:=false;
+  if ns<0 then
+   begin
+    ns:=-1-ns;
+    ReturnIndex:=true;
+   end;
+  if ns>High(used) then Exit;
+  if used[ns]=0 then Exit;
+  SetLength(ent,Floor(par[ns,1]));
+  // set up a temporary array for keeping the expected distributions
+  SetLength(p,Length(p)+2);
+  SetLength(p[High(p)],Length(p[ns]),Length(p[ns,0]),Length(p[ns,0,0]));
+  SetLength(p[High(p)-1],Length(p[ns]),Length(p[ns,0]),Length(p[ns,0,0]));
+  for h:=0 to Floor(par[ns,1])-1 do
+   begin
+    // find the intensity
+    if par[ns,1]=1 then
+      x:=par[ns,2]
+    else
+      x:=par[ns,2]+h*(par[ns,3]-par[ns,2])/(par[ns,1]-1);
+    // now find the probabilities for right and wrong answers for intensity x
+    // and the entropy of the distribution for both outcomes
+    p_r:=0;
+    for i:=0 to High(p[ns]) do
+     for j:=0 to High(p[ns,i]) do
+      for k:=0 to High(p[ns,i,j]) do
+       begin
+        c:=a[ns,1,1]+i*a[ns,1,2];
+        s:=a[ns,2,1]+j*a[ns,2,2];
+        p_err:=a[ns,3,1]+k*a[ns,3,2];
+        // probability for answer right for this intensity and psychometric function
+        p_rl:=Psychometric(ns,c,s,p_err,x);
+        // probability for answer right for all possible functions
+        p_r:=p_r+p[ns,i,j,k]*p_rl;
+        // piece of the new probability distribution
+        p[High(p)-1,i,j,k]:=p[ns,i,j,k]*p_rl;
+        p[High(p),i,j,k]:=p[ns,i,j,k]*(1-p_rl);
+       end;
+    Normalize(high(p)-1);
+    Normalize(high(p));
+    E_r:=0; E_w:=0;
+    for i:=0 to High(p[ns]) do
+     for j:=0 to High(p[ns,i]) do
+      for k:=0 to High(p[ns,i,j]) do
+       begin
+        if p[High(p)-1,i,j,k]<>0 then
+          E_r:=E_r - p[High(p)-1,i,j,k] * ln(p[High(p)-1,i,j,k]);
+        if p[High(p),i,j,k]<>0 then
+          E_w:=E_w - p[High(p),i,j,k]   * ln(p[High(p),i,j,k]  );
+       end;
+    ent[h]:=p_r*E_r+(1-p_r)*E_w;
+   end;
+  // now find the intensity with the lowest e
+  e_low:=ent[0];
+  Result:=par[ns,2];
+  for h:=0 to High(ent) do
+   if ent[h]<e_low then
+    begin
+     e_low:=ent[h];
+     if ReturnIndex then Result:=h else Result:=par[ns,2]+h*(par[ns,3]-par[ns,2])/(par[ns,1]-1);
+    end;
+  last_e:=ns;
+  if DebugLevel>1 then SaveEFile;
+  SetLength(p,Length(p)-2);
+end;
+
+function PossibleValues(ns,i: Integer): Double; cdecl;
+
+begin
+  Result:=-9999;
+  if (ns<0) or (ns>High(used)) then Exit;
+  if used[ns]=0 then Exit;
+  if (i>par[ns,1]-1) or (i<-1) then Exit;
+  if i=-1 then Result:=par[ns,1] else
+   begin
+    Result:=par[ns,2]+i*(par[ns,3]-par[ns,2])/(par[ns,1]-1);
+   end
+end;
+
+function CurrentEstimate(ns,v:Integer): Double; cdecl;
+var i,j,k: Integer;
+    pdfsc: Double;
+
+begin
+  Result:=-9999;
+  if (ns<0) or (ns>High(used)) then Exit;
+  if used[ns]=0 then Exit;
+  Result:=0;
+  pdfsc:=0;
+  if v<0 then
+    for i:=0 to High(p[ns]) do
+      for j:=0 to High(p[ns,i]) do
+        for k:=0 to High(p[ns,i,j]) do
+          pdfsc := pdfsc + p[ns,i,j,k]/prior[ns,i,j,k];
+  case abs(v) of
+    1: //current estimate of pse
+      for i:=0 to High(p[ns]) do
+        for j:=0 to High(p[ns,i]) do
+          for k:=0 to High(p[ns,i,j]) do
+            if v>0 then
+              Result:=Result+(a[ns,1,1]+a[ns,1,2]*i)*p[ns,i,j,k]
+            else
+              Result:=Result+(a[ns,1,1]+a[ns,1,2]*i)*p[ns,i,j,k]/prior[ns,i,j,k]/pdfsc;
+    2: // current estimate of slope
+      for i:=0 to High(p[ns]) do
+        for j:=0 to High(p[ns,i]) do
+          for k:=0 to High(p[ns,i,j]) do
+            if v>0 then
+              Result:=Result+(a[ns,2,1]+a[ns,2,2]*j)*p[ns,i,j,k]
+            else
+              Result:=Result+(a[ns,2,1]+a[ns,2,2]*j)*p[ns,i,j,k]/prior[ns,i,j,k]/pdfsc;
+    3: // current estimate of p_err
+      for i:=0 to High(p[ns]) do
+        for j:=0 to High(p[ns,i]) do
+          for k:=0 to High(p[ns,i,j]) do
+            if v>0 then
+              Result:=Result+(a[ns,3,1]+a[ns,3,2]*k)*p[ns,i,j,k]
+            else
+              Result:=Result+(a[ns,3,1]+a[ns,3,2]*k)*p[ns,i,j,k]/prior[ns,i,j,k]/pdfsc;
+    4: // current estimate of sd_pse
+      begin
+       for i:=0 to High(p[ns]) do
+        for j:=0 to High(p[ns,i]) do
+         for k:=0 to High(p[ns,i,j]) do
+          if v>0 then
+            Result:=Result+Power(a[ns,1,1]+a[ns,1,2]*i,2)*p[ns,i,j,k]
+          else
+            Result:=Result+Power(a[ns,1,1]+a[ns,1,2]*i,2)*p[ns,i,j,k]/prior[ns,i,j,k]/pdfsc;
+       Result:=sqrt(abs(Result-Power(CurrentEstimate(ns,1),2)));
+      end;
+    5: // current estimate of sd_pse
+      begin
+       for i:=0 to High(p[ns]) do
+        for j:=0 to High(p[ns,i]) do
+         for k:=0 to High(p[ns,i,j]) do
+          if v>0 then
+            Result:=Result+Power(a[ns,2,1]+a[ns,2,2]*j,2)*p[ns,i,j,k]
+          else
+            Result:=Result+Power(a[ns,2,1]+a[ns,2,2]*j,2)*p[ns,i,j,k]/prior[ns,i,j,k]/pdfsc;
+       Result:=sqrt(abs(Result-Power(CurrentEstimate(ns,2),2)));
+      end;
+    6: // current estimate of sd_pse
+      begin
+       for i:=0 to High(p[ns]) do
+        for j:=0 to High(p[ns,i]) do
+         for k:=0 to High(p[ns,i,j]) do
+          if v>0 then
+            Result:=Result+Power(a[ns,3,1]+a[ns,3,2]*k,2)*p[ns,i,j,k]
+          else
+            Result:=Result+Power(a[ns,3,1]+a[ns,3,2]*k,2)*p[ns,i,j,k]/prior[ns,i,j,k]/pdfsc;
+       Result:=sqrt(abs(Result-Power(CurrentEstimate(ns,3),2)));
+      end;
+    7: // number of trials stored
+      Result:=Length(t[ns]);
+    8: // psychometric function used
+      Result:=psych[ns];
+  else
+      Result:=-9999;
+  end;
+end;
+
+function RescaleDist(ns,method: Integer;nsd_pse,nsd_slope,nsd_p_err:Double;npse,nslope,nperr: Integer):Integer; cdecl;
+
+var  sd_pse,sd_slope,sd_p_err,pse,slope,p_err: Double;
+     i,j,k,n_pse,n_slope,n_p_err,nns: Integer;
+
+begin
+  Result:=0;
+  if (ns<0) or (ns>High(used)) then Exit;
+  if used[ns]=0 then Exit;
+  if (method<1) or (method>8) then Exit;
+  // this will set up a new staircase with the same number of matrix points
+  // as the current one, but the scaling of the grid will be based on the current
+  // estimate of the standard deviation
+  // different options are: use a flat prior, use the original prior and rescale
+  // or use a flat or the original prior and don't rescale
+
+  // set the size of the array
+  if method<5 then
+   begin
+    n_pse:=Length(p[ns]);
+    n_slope:=Length(p[ns,0]);
+    n_p_err:=Length(p[ns,0,0]);
+   end
+  else
+   begin
+    n_pse:=npse;
+    n_slope:=nslope;
+    n_p_err:=nperr;
+   end;
+  // center the new array on the current estimates
+  pse:=CurrentEstimate(ns,1);
+  slope:=CurrentEstimate(ns,2);
+  p_err:=CurrentEstimate(ns,3);
+  // get the standard deviations for the current estimate
+  sd_pse:=CurrentEstimate(ns,4);
+  sd_slope:=CurrentEstimate(ns,5);
+  sd_p_err:=CurrentEstimate(ns,6);
+
+  // now determine the actual parameters
+  case method of
+   1,5: // use the original prior function, but rescale array to the current SD * n
+      begin
+       // original flat in this dimension? set the range to n*sd and leave it flat
+       if par[ns,6]=0 then
+         nsd_pse:=nsd_pse*sd_pse
+       else
+         nsd_pse:=nsd_pse*sd_pse/par[ns,6];
+       sd_pse:=par[ns,6];
+       if par[ns,9]=0 then
+         nsd_slope:=nsd_slope*sd_slope
+       else
+         nsd_slope:=nsd_slope*sd_slope/par[ns,9];
+       sd_slope:=par[ns,9];
+       if par[ns,12]=0 then
+         nsd_p_err:=nsd_p_err*sd_p_err
+       else
+         nsd_p_err:=nsd_p_err*sd_p_err/par[ns,12];
+       sd_p_err:=par[ns,12];
+      end;
+   2,6: // use a flat prior function and rescale
+      begin
+        nsd_pse:=nsd_pse*sd_pse;
+        sd_pse:=0;
+        nsd_slope:=nsd_slope*sd_slope;
+        sd_slope:=0;
+        nsd_p_err:=nsd_p_err*sd_p_err;
+        sd_p_err:=0;
+      end;
+   3,7: // use the original prior and scale - reconstruct the original function
+      begin
+        pse:=par[ns,4];
+        nsd_pse:=par[ns,5];
+        sd_pse:=par[ns,6];
+        slope:=par[ns,7];
+        nsd_slope:=par[ns,8];
+        sd_slope:=par[ns,9];
+        p_err:=par[ns,10];
+        nsd_p_err:=par[ns,11];
+        sd_p_err:=par[ns,12];
+      end;
+   4,8: // use a flat prior function and original scale
+      begin
+        // if original was flat, use original nsd, else use original range as nsd
+        if par[ns,6]=0 then
+          nsd_pse:=par[ns,5]
+        else
+          nsd_pse:=par[ns,5]*par[ns,6];
+        sd_pse:=0;
+
+        if par[ns,9]=0 then
+          nsd_slope:=par[ns,8]
+        else
+          nsd_slope:=par[ns,8]*par[ns,9];
+        sd_slope:=0;
+
+        if par[ns,12]=0 then
+          nsd_p_err:=par[ns,11]
+        else
+          nsd_p_err:=par[ns,11]*par[ns,12];
+        sd_p_err:=0;
+      end;
+  end;
+
+  // now setup the staircase
+  nns:=SetupDist(a[ns,0,1],Floor(par[ns,1]),par[ns,2],par[ns,3],pse,n_pse,sd_pse,nsd_pse,slope,n_slope,sd_slope,nsd_slope,p_err,n_p_err,sd_p_err,nsd_p_err,psych[ns]);
+
+  // store the trials up to this point
+  for i:=0 to High(t[ns]) do
+    StoreResult(nns,t[ns,i].x,t[ns,i].res);
+
+  // set array size to the new size
+  SetLength(p[ns],n_pse,n_slope,n_p_err);
+  SetLength(prior[ns],n_pse,n_slope,n_p_err);
+
+  // copy the new probabilities over
+  for i:=0 to High(p[ns]) do
+   for j:=0 to High(p[ns,0]) do
+    for k:=0 to High(p[ns,0,0]) do
+      begin
+        p[ns,i,j,k]:=p[nns,i,j,k];
+        prior[ns,i,j,k]:=prior[nns,i,j,k];
+      end;
+
+  // copy the scaling over, too
+  for i:=1 to 3 do
+   begin
+    a[ns,i,1]:=a[nns,i,1];
+    a[ns,i,2]:=a[nns,i,2];
+   end;
+
+  // leave the parameters of the original distribution intact
+  // this means that the current parameters will be inaccessible
+  // for future rescaling
+  // an exception is the resolution, which is not remembered
+  // -> rescaling is always based on the original setup and current resolution
+
+  // remove the new staircase, without saving
+  i:=DebugLevel; DebugLevel:=0;
+  FinishDist(nns);
+  DebugLevel:=i;
+
+  // done
+  Result:=1;
+end;
+
+exports EstimateTime;
+exports DistActive;
+exports SetupDist;
+{exports SetupDistErr;}
+exports RescaleDist;
+exports FinishDist;
+exports StoreResult;
+exports RemoveResult;
+exports CurrentEstimate;
+exports NextTrial;
+exports HighestActive;
+exports SetDebugLevel;
+exports GetDebugLevel;
+exports SavePFile;
+exports SaveEFile;
+exports PossibleValues;
+
+// these are the function wrappers for visual basic and other languages which only call
+// using the stdcall convention
+
+function SCGetDebugLevel: Integer; stdcall;
+begin
+  Result:=GetDebugLevel;
+end;
+
+procedure SCSavePFile(ns: Integer); stdcall;
+begin
+  SavePFile(ns);
+end;
+
+{function SCSetupDist(n_guess:Double;n_x: Integer;x_min,x_max,pse:Double;
+   n_pse:Integer;sd_pse,nsd_pse,slope:Double;n_slope:Integer;
+   sd_slope,nsd_slope,p_err:Double): Integer; stdcall;
+begin
+  Result:=SetupDist(n_guess,n_x,x_min,x_max,pse,
+    n_pse,sd_pse,nsd_pse,slope,n_slope,sd_slope,nsd_slope,p_err);
+end;}
+
+function SCSetupDist(n_guess:Double;n_x:Integer;x_min,x_max,pse:Double;
+   n_pse:Integer;sd_pse,nsd_pse,slope:Double;n_slope:Integer;
+   sd_slope,nsd_slope,p_err:Double;n_p_err: Integer;
+   sd_p_err,nsd_p_err:Double;psf:Integer): Integer; stdcall;
+begin
+  Result:=SetupDist(n_guess,n_x,x_min,x_max,pse,
+    n_pse,sd_pse,nsd_pse,slope,n_slope,sd_slope,nsd_slope,
+    p_err,n_p_err,sd_p_err,nsd_p_err,psf);
+end;
+
+function SCHighestActive: Integer; stdcall;
+begin
+  Result:=HighestActive;
+end;
+
+procedure SCNormalize(ns: Integer); stdcall;
+begin
+  Normalize(ns);
+end;
+
+function SCDistActive(ns: Integer):Integer; stdcall;
+begin
+  Result:=DistActive(ns);
+end;
+
+function SCFinishDist(ns: Integer): Integer; stdcall;
+begin
+  Result:=FinishDist(ns);
+end;
+
+function SCEstimateTime(rep,n1,n2,n3,n4: Integer): Double; stdcall;
+begin
+  Result:=EstimateTime(rep,n1,n2,n3,n4);
+end;
+
+function SCStoreResult(ns: Integer;x:Double;res: Integer): Integer; stdcall;
+begin
+  Result:=StoreResult(ns,x,res);
+end;
+
+procedure SCSetDebugLevel(dl: Integer); stdcall;
+begin
+  SetDebugLevel(dl);
+end;
+
+function SCRemoveResult(ns: Integer;x:Double;res: Integer): Integer; stdcall;
+begin
+  Result:=RemoveResult(ns,x,res);
+end;
+
+function SCNextTrial(ns:Integer): Double; stdcall;
+begin
+  Result:=NextTrial(ns);
+end;
+
+function SCCurrentEstimate(ns,v:Integer): Double; stdcall;
+begin
+  Result:=CurrentEstimate(ns,v);
+end;
+
+function SCRescaleDist(ns,method: Integer;nsd_pse,nsd_slope,nsd_p_err:Double;npse,nslope,nperr:Integer):Integer; stdcall;
+begin
+  Result:=RescaleDist(ns,method,nsd_pse,nsd_slope,nsd_p_err,npse,nslope,nperr);
+end;
+
+function SCPossibleValues(ns,i: Integer): Double; stdcall;
+begin
+  Result:=PossibleValues(ns,i);
+end;
+
+
+exports SCEstimateTime;
+exports SCDistActive;
+exports SCSetupDist;
+{exports SCSetupDistErr;}
+exports SCFinishDist;
+exports SCStoreResult;
+exports SCRemoveResult;
+exports SCCurrentEstimate;
+exports SCNextTrial;
+exports SCHighestActive;
+exports SCSetDebugLevel;
+exports SCGetDebugLevel;
+exports SCSavePFile;
+exports SCRescaleDist;
+exports SCPossibleValues;
+
+end.

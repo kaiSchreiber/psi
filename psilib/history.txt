@@ -1,0 +1,11 @@
+Psilib V1.0
+
+build 1: The first published release of psilib.
+
+Previous versions called SetupDist SetupDistErr and had an additional
+function SetupDist that setups a 2D pdf, excluding estimation of p_err.
+Since that can be achieved by the user by setting n_p_err to 1, this
+option has been removed. Programs written for the earlier version need
+to change their calls to SetupDist to include additional parameters for
+p_err and the psf. Calls to SetupDistErr should just be renamed to 
+SetupDist.
